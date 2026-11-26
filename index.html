@@ -2,22 +2,122 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
 <title>Learning Pod</title>
 <style>
+  :root{--bg:#0f172a;--ink:#e2e8f0;--muted:#94a3b8;--dim:#64748b;--grid:#1e293b;--snake:#34d399;--food:#f472b6}
+  *{box-sizing:border-box}
   body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
-       font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#0f172a;color:#e2e8f0}
-  main{max-width:560px;padding:40px 28px;text-align:center}
-  h1{font-size:2.4rem;margin:0 0 16px;letter-spacing:-.5px}
-  p{font-size:1.1rem;line-height:1.6;color:#94a3b8;margin:0}
-  footer{margin-top:40px;font-size:.85rem;color:#64748b}
+       font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--ink)}
+  main{max-width:560px;width:100%;padding:36px 20px;text-align:center}
+  h1{font-size:2.4rem;margin:0 0 14px;letter-spacing:-.5px}
+  p{font-size:1.05rem;line-height:1.6;color:var(--muted);margin:0}
+  .game{margin:34px auto 0;max-width:340px}
+  .bar{display:flex;justify-content:space-between;font-size:.9rem;color:var(--muted);margin-bottom:8px}
+  canvas{width:100%;aspect-ratio:1;background:var(--grid);border-radius:12px;display:block;touch-action:none}
+  .hint{font-size:.85rem;color:var(--dim);margin-top:10px}
+  .pad{display:grid;grid-template-columns:repeat(3,56px);gap:8px;justify-content:center;margin-top:14px}
+  .pad button{height:48px;border:0;border-radius:10px;background:#1e293b;color:var(--ink);font-size:1.2rem;cursor:pointer}
+  .pad button:active{background:#334155}
+  .pad .u{grid-column:2}.pad .l{grid-column:1;grid-row:2}.pad .d{grid-column:2;grid-row:2}.pad .r{grid-column:3;grid-row:2}
+  footer{margin-top:36px;font-size:.85rem;color:var(--dim)}
 </style>
 </head>
 <body>
 <main>
   <h1>Learning Pod</h1>
   <p>This page was created for testing and research. Our work runs quietly in the background.</p>
+
+  <section class="game" aria-label="Snake game">
+    <div class="bar"><span>Score: <b id="score">0</b></span><span>Best: <b id="best">0</b></span></div>
+    <canvas id="c" width="320" height="320"></canvas>
+    <div class="hint" id="hint">While you wait… tap or press any arrow key to play Snake 🐍</div>
+    <div class="pad">
+      <button class="u" data-d="up" aria-label="Up">▲</button>
+      <button class="l" data-d="left" aria-label="Left">◀</button>
+      <button class="d" data-d="down" aria-label="Down">▼</button>
+      <button class="r" data-d="right" aria-label="Right">▶</button>
+    </div>
+  </section>
+
   <footer>&copy; 2026 Learning Pod</footer>
 </main>
+<script>
+(() => {
+  const N = 16, cv = document.getElementById('c'), x = cv.getContext('2d'), S = cv.width / N;
+  const scoreEl = document.getElementById('score'), bestEl = document.getElementById('best'), hint = document.getElementById('hint');
+  const DIRS = {up:[0,-1], down:[0,1], left:[-1,0], right:[1,0]};
+  let best = 0; try { best = +localStorage.getItem('lp-snake-best') || 0; } catch (e) {}
+  bestEl.textContent = best;
+  let snake, dir, queue, food, score, timer, running = false, over = false;
+
+  function reset() {
+    snake = [[7,8],[6,8],[5,8]]; dir = 'right'; queue = []; score = 0; over = false;
+    scoreEl.textContent = 0; placeFood(); draw();
+  }
+  function placeFood() {
+    do { food = [Math.floor(Math.random()*N), Math.floor(Math.random()*N)]; }
+    while (snake.some(s => s[0] === food[0] && s[1] === food[1]));
+  }
+  function cell(p, color, r) {
+    x.fillStyle = color; x.beginPath();
+    x.roundRect(p[0]*S+1.5, p[1]*S+1.5, S-3, S-3, r); x.fill();
+  }
+  function draw() {
+    x.clearRect(0, 0, cv.width, cv.height);
+    cell(food, getComputedStyle(document.body).getPropertyValue('--food'), S/2);
+    const g = getComputedStyle(document.body).getPropertyValue('--snake');
+    snake.forEach((s, i) => { x.globalAlpha = i ? 0.85 : 1; cell(s, g, 5); });
+    x.globalAlpha = 1;
+    if (over) {
+      x.fillStyle = 'rgba(15,23,42,.75)'; x.fillRect(0, 0, cv.width, cv.height);
+      x.fillStyle = '#e2e8f0'; x.textAlign = 'center';
+      x.font = 'bold 26px system-ui'; x.fillText('Game over', cv.width/2, cv.height/2 - 6);
+      x.font = '15px system-ui'; x.fillText('Tap or press a key to play again', cv.width/2, cv.height/2 + 22);
+    }
+  }
+  function step() {
+    if (queue.length) dir = queue.shift();
+    const [dx, dy] = DIRS[dir], h = snake[0], n = [h[0]+dx, h[1]+dy];
+    const hitWall = n[0] < 0 || n[1] < 0 || n[0] >= N || n[1] >= N;
+    const hitSelf = snake.slice(0, -1).some(s => s[0] === n[0] && s[1] === n[1]);
+    if (hitWall || hitSelf) return end();
+    snake.unshift(n);
+    if (n[0] === food[0] && n[1] === food[1]) {
+      score++; scoreEl.textContent = score;
+      if (score > best) { best = score; bestEl.textContent = best; try { localStorage.setItem('lp-snake-best', best); } catch (e) {} }
+      placeFood();
+      clearInterval(timer); timer = setInterval(step, Math.max(70, 150 - score * 4));
+    } else snake.pop();
+    draw();
+  }
+  function start() { reset(); running = true; hint.textContent = 'Eat the pink dots. Don\'t hit the walls or yourself!'; timer = setInterval(step, 150); }
+  function end() { clearInterval(timer); running = false; over = true; draw(); hint.textContent = 'Nice try! Score: ' + score; }
+  function turn(d) {
+    if (!running) { start(); }
+    const last = queue.length ? queue[queue.length-1] : dir;
+    const [lx, ly] = DIRS[last], [nx, ny] = DIRS[d];
+    if (lx + nx === 0 && ly + ny === 0) return;   // no reversing into yourself
+    if (queue.length < 3) queue.push(d);
+  }
+
+  document.addEventListener('keydown', e => {
+    const k = {ArrowUp:'up', ArrowDown:'down', ArrowLeft:'left', ArrowRight:'right', w:'up', s:'down', a:'left', d:'right'}[e.key];
+    if (k) { e.preventDefault(); turn(k); }
+    else if (!running && (e.key === ' ' || e.key === 'Enter')) { e.preventDefault(); start(); }
+  });
+  document.querySelectorAll('.pad button').forEach(b => b.addEventListener('click', () => turn(b.dataset.d)));
+  let t0 = null;
+  cv.addEventListener('touchstart', e => { t0 = [e.touches[0].clientX, e.touches[0].clientY]; }, {passive:true});
+  cv.addEventListener('touchend', e => {
+    if (!t0) return;
+    const dx = e.changedTouches[0].clientX - t0[0], dy = e.changedTouches[0].clientY - t0[1]; t0 = null;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 20) { if (!running) start(); return; }
+    turn(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up'));
+  });
+  cv.addEventListener('click', () => { if (!running) start(); });
+  reset();
+})();
+</script>
 </body>
 </html>
